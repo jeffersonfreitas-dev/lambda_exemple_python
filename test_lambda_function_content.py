@@ -1,8 +1,10 @@
+import json
+
 import pytest
 import responses
 from unittest.mock import patch
 
-from lambda_function import _get_token, lambda_function, _send_object
+from lambda_function_content import _get_token, lambda_function, _send_content
 
 BASE_URL = "http://localhost:8080"
 TOKEN_MOCK_RESPONSE = {"access_token": "eyJhbGciOiJIUzI1NiIsImt", "token_type": "Bearer", "expires_in": 1079}
@@ -15,7 +17,7 @@ def mock_get_token():
 
 @pytest.fixture
 def mock_send_object():
-    with patch("lambda_function._send_object") as mock:
+    with patch("lambda_function._send_content") as mock:
         yield mock
 
 @responses.activate
@@ -63,53 +65,69 @@ def test_get_token_parameter_validation(client_id, client_secret, account_id, ex
     assert result["statusCode"] == 400
 
 
-@pytest.mark.parametrize("request_obj, token, expected_error", [
+@pytest.mark.parametrize("content, token, expected_error", [
     (None, "token", "Requisição recebida não pode ter o objeto nulo"),
     ("", "token", "String do objeto não pode ser vazio ou conter apenas espaços"),
     ("   ", "token", "String do objeto não pode ser vazio ou conter apenas espaços"),
     ({}, "token", "Objeto não pode ser vazio"),
-    ([], "token", "Objeto não pode ser vazio"),
-    (123, "token", "Tipo de objeto inválido. Deve ser string, lista ou dicionário"),
+    ([], "token", "Tipo de objeto inválido. Deve ser string ou dicionário"),
+    (123, "token", "Tipo de objeto inválido. Deve ser string ou dicionário"),
+    ({"test":"test"}, "token", "Campos obrigatórios 'name' não informado ou está vazio."),
+    ('{"test":"test"}', "token", "Campos obrigatórios 'name' não informado ou está vazio."),
+    ({"name":""}, "token", "Campos obrigatórios 'name' não informado ou está vazio."),
+    ({"name":"correct"}, "token", "Campos obrigatórios 'file' não informado ou está vazio."),
+    ({"name":"correct", "file": ""}, "token", "Campos obrigatórios 'file' não informado ou está vazio."),
+    ("teste", "token", "String do objeto não pode ser vazio ou conter apenas espaços"),
 ])
-def test_send_object_parameter_validation(request_obj, token, expected_error):
-    result = _send_object(request_obj, token)
+def test_send_content_parameter_validation(content, token, expected_error):
+    result = _send_content(content, token)
 
     assert expected_error == result["message"]
     assert result["statusCode"] == 400
 
 
 @responses.activate
-def test_send_object_success():
-    responses.add(responses.POST, f"{BASE_URL}", status=202)
+def test_send_content_success_dict():
+    responses.add(responses.POST, f"{BASE_URL}", status=200)
     token = "eyJhbGciOiJIUzI1"
-    body = [{
-        "keys": {
-            "email_officer": "teste.01@mailer.com.br"
-        },
-        "values": {
-            "email_to": "teste.01@mailer.com.br",
-            "email_cc": "teste.02@mailer.com.br",
-            "noma_officer": "Fulano",
-            "subjetc": "Teste",
-            "introducao": "Informo que, na data"
-        }
-    }]
-    result = _send_object(body, token)
+    body = {
+        "name": "test_name",
+        "file": "UEsDBBQAAAAIAJNN3lpGx01IlQ=="
+    }
+    result = _send_content(body, token)
 
-    assert result == {"statusCode": 202, "message": "Registro criado com sucesso"}
+    assert result == {"statusCode": 200, "message": "Registro criado com sucesso"}
+    assert len(responses.calls) == 1
+    assert responses.calls[0].request.url == f"{BASE_URL}/"
+    assert responses.calls[0].request.headers["Authorization"] == f"Bearer {token}"
+
+@responses.activate
+def test_send_content_success_str():
+    responses.add(responses.POST, f"{BASE_URL}", status=200)
+    token = "eyJhbGciOiJIUzI1"
+    body = json.dumps({
+        "name": "test_name",
+        "file": "UEsDBBQAAAAIAJNN3lpGx01IlQ=="
+    })
+    result = _send_content(body, token)
+
+    assert result == {"statusCode": 200, "message": "Registro criado com sucesso"}
     assert len(responses.calls) == 1
     assert responses.calls[0].request.url == f"{BASE_URL}/"
     assert responses.calls[0].request.headers["Authorization"] == f"Bearer {token}"
 
 
 @responses.activate
-def test_send_object_error():
+def test_send_content_error():
     token = "eyJhbGciOiJIUzI1"
-    body = "invalid_json"
+    body = json.dumps({
+        "name": "test_name",
+        "file": "UEsDBBQAAAAIAJNN3lpGx01IlQ=="
+    })
     status_code = 400
     error_respose = {"statusCode": status_code, "message": "Erro http"}
     responses.add(responses.POST, f"{BASE_URL}", status=status_code, json=error_respose)
-    result = _send_object(body, token)
+    result = _send_content(body, token)
 
     assert result == error_respose
     assert len(responses.calls) == 1

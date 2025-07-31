@@ -64,26 +64,24 @@ def _get_token(client_id: str, client_secret: str, account_id: str) -> dict:
 
 
 @_handle_http_errors
-def _send_object(request_obj: str | list | dict, token: str) -> dict:
-    if request_obj is None:
-        return _build_response(400, "Requisição recebida não pode ter o objeto nulo")
+def _delete_object(resource: dict, token: str) -> dict:
+    if not resource:
+        return _build_response(400, "Código do recurso não pode ser nulo")
 
-    if isinstance(request_obj, str):
-        if not request_obj.strip():
-            return _build_response(400, "String do objeto não pode ser vazio ou conter apenas espaços")
-    elif isinstance(request_obj, list) or isinstance(request_obj, dict):
-        if not request_obj:
-            return _build_response(400, "Objeto não pode ser vazio")
-    else:
-        return _build_response(400, "Tipo de objeto inválido. Deve ser string, lista ou dicionário")
+    if not isinstance(resource, dict):
+        return _build_response(400, "Tipo inválido. Deve ser um dicionário")
+
+    if "id" not in resource or not resource.get("id"):
+        return _build_response(400, "Código do recurso é obrigatório para exclusão")
 
     request_header = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
-    response = requests.post(f"{BASE_URL}", request_obj, headers=request_header)
+    resource_id = resource.get("id")
+    response = requests.delete(f"{BASE_URL}/{resource_id}", headers=request_header)
     response.raise_for_status()
-    return _build_response(202, "Registro criado com sucesso")
+    return _build_response(200, f"Registro {resource_id} excluído com sucesso")
 
 
 
@@ -93,11 +91,11 @@ def lambda_function(event, context):
         if not token:
             raise ValueError("O token não pode ser nulo ou vazio")
 
-        send_result = _send_object(event, token["access_token"])
-        if not send_result:
+        delete_result = _delete_object(event, token["access_token"])
+        if not delete_result:
             raise ValueError("Houve um problema no envio da requisição")
 
-        return send_result
+        return delete_result
 
     except ValueError as errv:
         logging.error(f"Erro de validação: {errv}")

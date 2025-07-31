@@ -1,5 +1,7 @@
+import json
 import logging
 from functools import wraps
+from typing import Optional
 
 import requests
 
@@ -64,27 +66,48 @@ def _get_token(client_id: str, client_secret: str, account_id: str) -> dict:
 
 
 @_handle_http_errors
-def _send_object(request_obj: str | list | dict, token: str) -> dict:
-    if request_obj is None:
-        return _build_response(400, "Requisição recebida não pode ter o objeto nulo")
+def _send_content(content: str | dict, token: str) -> dict:
+    try:
+        request_body = _validate_content(content)
 
-    if isinstance(request_obj, str):
-        if not request_obj.strip():
-            return _build_response(400, "String do objeto não pode ser vazio ou conter apenas espaços")
-    elif isinstance(request_obj, list) or isinstance(request_obj, dict):
-        if not request_obj:
-            return _build_response(400, "Objeto não pode ser vazio")
+        request_header = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        response = requests.post(f"{BASE_URL}", request_body, headers=request_header)
+        response.raise_for_status()
+        # todo: Enviar o id do objeto para o SQS
+
+        return _build_response(200, "Registro criado com sucesso")
+    except ValueError as errv:
+        return _build_response(400, str(errv))
+
+
+def _validate_content(content: str | dict) -> Optional[dict]:
+    if content is None:
+        raise ValueError("Requisição recebida não pode ter o objeto nulo")
+
+    if isinstance(content, str):
+        try:
+            content_dict = json.loads(content)
+        except json.JSONDecodeError:
+            raise ValueError("String do objeto não pode ser vazio ou conter apenas espaços")
+
+    elif isinstance(content, dict):
+        if not content:
+            raise ValueError("Objeto não pode ser vazio")
+        else:
+            content_dict = content
     else:
-        return _build_response(400, "Tipo de objeto inválido. Deve ser string, lista ou dicionário")
+        raise ValueError("Tipo de objeto inválido. Deve ser string ou dicionário")
 
-    request_header = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-    response = requests.post(f"{BASE_URL}", request_obj, headers=request_header)
-    response.raise_for_status()
-    return _build_response(202, "Registro criado com sucesso")
+    if "name" not in content_dict or not content_dict.get("name"):
+        raise ValueError("Campos obrigatórios 'name' não informado ou está vazio.")
 
+    if "file" not in content_dict or not content_dict.get("file"):
+        raise ValueError("Campos obrigatórios 'file' não informado ou está vazio.")
+
+    return content_dict
 
 
 def lambda_function(event, context):
@@ -93,7 +116,7 @@ def lambda_function(event, context):
         if not token:
             raise ValueError("O token não pode ser nulo ou vazio")
 
-        send_result = _send_object(event, token["access_token"])
+        send_result = _send_content(event, token["access_token"])
         if not send_result:
             raise ValueError("Houve um problema no envio da requisição")
 

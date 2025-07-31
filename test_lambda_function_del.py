@@ -1,8 +1,10 @@
+import json
+
 import pytest
 import responses
 from unittest.mock import patch
 
-from lambda_function import _get_token, lambda_function, _send_object
+from lambda_function_del import _get_token, lambda_function, _delete_object
 
 BASE_URL = "http://localhost:8080"
 TOKEN_MOCK_RESPONSE = {"access_token": "eyJhbGciOiJIUzI1NiIsImt", "token_type": "Bearer", "expires_in": 1079}
@@ -14,8 +16,8 @@ def mock_get_token():
         yield mock
 
 @pytest.fixture
-def mock_send_object():
-    with patch("lambda_function._send_object") as mock:
+def mock_delete_object():
+    with patch("lambda_function._delete_object") as mock:
         yield mock
 
 @responses.activate
@@ -63,53 +65,46 @@ def test_get_token_parameter_validation(client_id, client_secret, account_id, ex
     assert result["statusCode"] == 400
 
 
-@pytest.mark.parametrize("request_obj, token, expected_error", [
-    (None, "token", "Requisição recebida não pode ter o objeto nulo"),
-    ("", "token", "String do objeto não pode ser vazio ou conter apenas espaços"),
-    ("   ", "token", "String do objeto não pode ser vazio ou conter apenas espaços"),
-    ({}, "token", "Objeto não pode ser vazio"),
-    ([], "token", "Objeto não pode ser vazio"),
-    (123, "token", "Tipo de objeto inválido. Deve ser string, lista ou dicionário"),
+@pytest.mark.parametrize("content, token, expected_error", [
+    (None, "token", "Código do recurso não pode ser nulo"),
+    ("", "token", "Código do recurso não pode ser nulo"),
+    ("   ", "token", "Tipo inválido. Deve ser um dicionário"),
+    ({}, "token", "Código do recurso não pode ser nulo"),
+    ([], "token", "Código do recurso não pode ser nulo"),
+    (123, "token", "Tipo inválido. Deve ser um dicionário"),
+    ({"test":"test"}, "token", "Código do recurso é obrigatório para exclusão"),
+    ({"id":""}, "token", "Código do recurso é obrigatório para exclusão"),
 ])
-def test_send_object_parameter_validation(request_obj, token, expected_error):
-    result = _send_object(request_obj, token)
+def test_delete_object_parameter_validation(content, token, expected_error):
+    result = _delete_object(content, token)
 
     assert expected_error == result["message"]
     assert result["statusCode"] == 400
 
 
 @responses.activate
-def test_send_object_success():
-    responses.add(responses.POST, f"{BASE_URL}", status=202)
+def test_delete_object_success_dict():
+    codigo = 123
+    responses.add(responses.DELETE, f"{BASE_URL}/{codigo}", status=200)
     token = "eyJhbGciOiJIUzI1"
-    body = [{
-        "keys": {
-            "email_officer": "teste.01@mailer.com.br"
-        },
-        "values": {
-            "email_to": "teste.01@mailer.com.br",
-            "email_cc": "teste.02@mailer.com.br",
-            "noma_officer": "Fulano",
-            "subjetc": "Teste",
-            "introducao": "Informo que, na data"
-        }
-    }]
-    result = _send_object(body, token)
+    body = {"id": codigo}
+    result = _delete_object(body, token)
 
-    assert result == {"statusCode": 202, "message": "Registro criado com sucesso"}
+    assert result == {"statusCode": 200, "message": f"Registro {codigo} excluído com sucesso"}
     assert len(responses.calls) == 1
-    assert responses.calls[0].request.url == f"{BASE_URL}/"
+    assert responses.calls[0].request.url == f"{BASE_URL}/{codigo}"
     assert responses.calls[0].request.headers["Authorization"] == f"Bearer {token}"
 
 
 @responses.activate
-def test_send_object_error():
+def test_delete_object_error():
+    codigo = 123
     token = "eyJhbGciOiJIUzI1"
-    body = "invalid_json"
+    body = {"id": codigo}
     status_code = 400
     error_respose = {"statusCode": status_code, "message": "Erro http"}
-    responses.add(responses.POST, f"{BASE_URL}", status=status_code, json=error_respose)
-    result = _send_object(body, token)
+    responses.add(responses.DELETE, f"{BASE_URL}/{codigo}", status=status_code, json=error_respose)
+    result = _delete_object(body, token)
 
     assert result == error_respose
     assert len(responses.calls) == 1
@@ -125,9 +120,9 @@ def test_lambda_function_null_token(mock_get_token):
     assert "token não pode ser nulo" in result["message"]
 
 
-def test_lambda_function_null_response(mock_get_token, mock_send_object):
+def test_lambda_function_null_response(mock_get_token, mock_delete_object):
     mock_get_token.return_value = {"access_token": "eyJhbGciOiJIUzI1"}
-    mock_send_object.return_value = None
+    mock_delete_object.return_value = None
     event = [{"valid": "event"}]
 
     result = lambda_function(event, None)
@@ -136,9 +131,9 @@ def test_lambda_function_null_response(mock_get_token, mock_send_object):
     assert "problema no envio" in result["message"]
 
 
-def test_lambda_function_success(mock_get_token, mock_send_object):
+def test_lambda_function_success(mock_get_token, mock_delete_object):
     mock_get_token.return_value = {"access_token": "eyJhbGciOiJIUzI1"}
-    mock_send_object.return_value = {"statusCode": 202, "message": "Registro criado com sucesso"}
+    mock_delete_object.return_value = {"statusCode": 202, "message": "Registro criado com sucesso"}
     event = [{"valid": "event"}]
 
     result = lambda_function(event, None)
